@@ -1,0 +1,20 @@
+---
+title: "pig project"
+format: pdf
+editor: visual
+---
+
+## Abstract (Project)
+
+## Overview Quarto-File
+
+-   `utils.R` -file: reusable functions are stored
+-   
+
+## Data
+
+-   MF_SGB_abundance.txt
+
+-   MF_abundance.txt
+
+-   20_Clades_list_vJan25.txt
