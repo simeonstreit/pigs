@@ -4,4 +4,4 @@
 .Ruserdata
 
 #OS-specific data
-**/.DS_Store
+.DS_Store
