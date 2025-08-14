@@ -1,6 +1,16 @@
 ---
 title: "pig project"
-format: pdf
+format: 
+  pdf:
+    # Page size & margins
+    papersize: a4
+    geometry:
+      - margin=20mm        # or 25mm
+      # - landscape        # uncomment for landscape
+    # Fonts (optional, helps with unicode like α, β)
+    pdf-engine: xelatex
+    mainfont: "Lucida Grande"
+
 editor: visual
 ---
 
@@ -25,4 +35,271 @@ Later those species are analysed on the strain-level in order to detect strain s
 
 -   20_Clades_list_vJan25.txt
 
+-   matadata_samples.csv
+
+    -   Sample-Name
+
+    -   stage
+
+    -   farm number
+
+    -   animal
+
+    -   combined stage and farmnumber
+
 ## Dependencies
+
+`utils.R` **-script**
+
+```{r}
+source("utils.R")
+```
+
+**for Phyloseq, Desq2, Barplots, Ordination analysis**
+
+```{r}
+#| echo: true
+#| message: false
+#| warning: false
+#| results: hide
+
+
+#devtools::install_github("gmteunisse/fantaxtic")
+#devtools::install_github("gmteunisse/ggnested")
+library(tidyverse)
+library(BiocManager)
+library(phyloseq)
+library(ggnested)
+library(fantaxtic)
+library(magrittr)
+library(knitr)
+library(gridExtra)
+library(ggplot2)
+```
+
+**for diversity calculations and Ordination analyis**
+
+```{r}
+#| echo: true
+#| message: false
+#| warning: false
+#| results: hide
+library(microbiome)
+library(vegan)
+```
+
+**for differential abundance analysis and volcano plots**
+
+```{r}
+#| echo: true
+#| message: false
+#| warning: false
+#| results: hide
+
+
+library(ggrepel)
+library(EnhancedVolcano)
+library(dplyr)
+library(DESeq2)
+library(ggplot2)
+library(tibble)
+library(knitr)
+```
+
+**for Venn Diagrams**
+
+```{r}
+#| echo: true
+#| message: false
+#| warning: false
+#| results: hide
+
+
+library(futile.logger)
+library(grid)
+library(VennDiagram)
+```
+
+**others**
+
+```{r}
+#| echo: true
+#| message: false
+#| warning: false
+#| results: hide
+
+library(stringr)
+library(pheatmap)
+library(microViz)
+```
+
+## Load data
+
+```{r}
+# metaphlan raw read data (MF_SGB_abundance.txt)
+metaphlanData <- read.table("../data/raw/MF_SGB_abundance.txt", header = TRUE, sep = "")
+metaphlanData$clade_name <- as.character(metaphlanData$clade_name)
+metaData <- read.table("../metadata/metadata_samples.csv", header = TRUE, sep = ",")
+
+# metaphlan percent data (MF_SGB_percent.txt)
+metaphlanData_percent <- read.table("../data/raw/MF_SGB_percent.txt", header = TRUE, sep = "", row.names = 1)
+
+# name the rows according to the sample names
+rownames(metaData) <- metaData$Sample_name
+
+# assigns 0 to all NA's
+metaphlanData[is.na(metaphlanData)] <- 0
+```
+
+## Phyloseq Object
+
+```{r}
+meta_physeq <- metaphlan_to_phyloseq(metaphlanData, metaData, version = 4, verbose = TRUE, tax_lvl = "SGB")
+
+ps <- meta_physeq
+ps <- subset_taxa(ps, Kingdom !="UNKNOWN") # remove the unknowns
+
+#View(ps@tax_table@.Data)
+
+ps@tax_table@.Data <- substring(ps@tax_table@.Data, 4)
+taxa_names(ps) <- substring(taxa_names(ps), 4)
+colnames(ps@tax_table@.Data)<- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "SGB")
+
+
+```
+
+## Filter Phyloseq Object globally
+
+```{r}
+ps_filtered <- filter_species_by_group_prevalence(
+  ps = ps,
+  min_count = 10,
+  min_prevalence = 0.1,
+  group_var = "animal"
+)
+
+
+ps <-  ps_filtered
+```
+
+save filtered phyloseq object:
+
+```{r}
+saveRDS(ps,"../data/processed/ps.Rdata")
+```
+
+## Relative abundance - Barplots
+
+### Top 10 Species (SGB)
+
+```{r}
+# filter for top species and define tax_level
+top.ps <- fantaxtic::top_taxa(ps, tax_level = "SGB", n_taxa = 10)
+top.ps <- top.ps$ps_obj
+
+# top 10 species overall barplot
+p_top10 <- plot_nested_bar(top.ps, top_level = "Phylum", nested_level = "SGB") +
+  theme(text = element_text(size = 10))
+print(p_top10)
+  
+  
+# top 10 species wrapped among stage
+p_top10_stage <- plot_nested_bar(top.ps, top_level = "Phylum", nested_level = "SGB") +
+  theme(text = element_text(size = 10))+
+  facet_wrap(~stage, scales = "free_x")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme(text = element_text(size = 10))
+print(p_top10_stage)
+
+# top 10 species wrapped ctrl, pig, pigworkers
+p_top10_animal <- plot_nested_bar(top.ps, top_level = "Phylum", nested_level = "SGB") +
+  theme(text = element_text(size = 10))+
+  facet_wrap(~animal, scales = "free_x")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme(text = element_text(size = 10))
+print(p_top10_animal)
+```
+
+### Top 20 Species (SGB)
+
+```{r}
+# filter for top 20 species and define tax_lavel
+top.ps <- fantaxtic::top_taxa(ps, tax_level = "SGB", n_taxa = 20)
+top.ps <- top.ps$ps_obj
+
+# top 20 species overall barplot
+p_top20 <- plot_nested_bar(top.ps, top_level = "Phylum", nested_level = "SGB")
+print(p_top20)
+
+# top 20 species wrapped among stage
+p_top20_stage <- plot_nested_bar(top.ps, top_level = "Phylum", nested_level = "SGB")+
+  theme(text = element_text(size = 10))+
+  facet_wrap(~stage, scales = "free_x")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme(text = element_text(size = 10))
+print(p_top20_stage)
+
+# top 20 species wrapped ctrl, pig, pigworkers
+p_top20_animal <- plot_nested_bar(top.ps, top_level = "Phylum", nested_level = "SGB")+
+  theme(text = element_text(size = 10))+
+  facet_wrap(~animal, scales = "free_x")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme(text = element_text(size = 10))
+print(p_top20_animal)
+```
+
+## Diversity measures
+
+## Ordination analysis - NMDS
+
+-   AIM: move point along 2D scale, using optimization algorithm. Does not assume a linear relationship in our data
+
+<!-- -->
+
+-   need of a bray-curtis distance matrix
+
+### ordination analysis based on phyloseq object (abundance based)
+
+```{r}
+# convert phyloseq object to compositional data (using microbiome package)
+pseq.rel <- microbiome::transform(ps, "compositional")
+
+# get distance matrix 
+dist <- phyloseq::distance(pseq.rel, method = "bray")
+
+# ordinate the data
+set.seed(4235421)
+nmds <- metaMDS(dist, k = 1, trymax = 100)
+
+#NMDS-Plot
+plot_NMDS <- plot_ordination(pseq, ord, color = "animal") +
+  geom_point(size = 1.2)+
+  theme_minimal()
+print(plot_NMDS)
+
+#stress plot
+stressplot(nmds)
+```
+
+### ordination based on vegan package (percent based)
+
+```{r}
+# calculate distance matrix
+dist_matrix <- vegdist(t(metaphlanData_percent))
+
+set.seed(123)
+nmds <- metaMDS(dist_matrix)
+
+# get scores from the vegan package
+scores(nmds)
+
+
+# adapt metadata table
+metaData_2 <- metaData%>%
+  tibble::rownames_to_column(var = "Sample_ID")
+
+# make a data frame
+nmds_plot <- scores(nmds) %>%
+  as.data.frame(rownames = "Sample_ID") %>%
+  inner_join(., metadata, by = "Sample_ID", copy = TRUE)
+```

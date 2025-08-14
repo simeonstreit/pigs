@@ -4,4 +4,12 @@
 .Ruserdata
 
 #OS-specific data
-.DS_Store
+**/.DS_Store
+
+# created files
+*.pdf
+*.html
+*_files
+
+#folder
+figures
