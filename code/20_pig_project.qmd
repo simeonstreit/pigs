@@ -10,6 +10,8 @@ format:
     # Fonts (optional, helps with unicode like α, β)
     pdf-engine: xelatex
     mainfont: "Lucida Grande"
+    toc: true
+    toc-title: Contents
 
 editor: visual
 ---
@@ -75,6 +77,8 @@ library(magrittr)
 library(knitr)
 library(gridExtra)
 library(ggplot2)
+library(goeveg) # scree plot NMDS
+library(gplots) # for distance matrix
 ```
 
 **for diversity calculations and Ordination analyis**
@@ -250,15 +254,73 @@ print(p_top20_animal)
 
 ## Diversity measures
 
-## Ordination analysis - NMDS
+### $alpha$ diversity
 
--   AIM: move point along 2D scale, using optimization algorithm. Does not assume a linear relationship in our data
+using shannon-diversity index in order to calculate $alpha$ diversity. Thus, we have to manipulate the data, so that we have proportions and not percentages and transpose the data in order to get a vector per sample and not a vector per species.
 
-<!-- -->
+```{r}
+# data manipulation
+data_prop <- metaphlanData_percent / 100
+data_prop_t <- t(data_prop)
 
--   need of a bray-curtis distance matrix
+# shannon diversity index calculation
+shannon <- diversity(data_prop_t, index = "shannon")
+observed_species <- rowSums(data_prop_t > 0)
 
-### ordination analysis based on phyloseq object (abundance based)
+# data frame for alpha diversity plot
+alpha_diversity <- data.frame(
+  sample = rownames(data_prop_t),
+  shannon = shannon,
+  observed_species = observed_species,
+  stage = tolower(str_extract(rownames(data_prop_t), "^[a-zA-Z]")),
+  farm_number = str_extract(rownames(data_prop_t), "(?<=^[a-zA-Z])\\d+"),
+  species = if_else(str_detect(rownames(data_prop_t), "pp"), "pig",
+                    if_else(str_detect(rownames(data_prop_t), "X"), "ctrl", "human"))
+  )
+
+```
+
+$alpha$ diversity violin plots
+
+-   A: pigs / pig workers / ctrls
+
+-   B: pigs per stage
+
+```{r}
+# plot A: pig / pig workers / ctrls
+plot_alpha_A <- ggplot(
+  data = alpha_diversity, 
+  aes(x = species, y = shannon, fill = species))+
+    geom_violin(trim = FALSE, alpha = 0.5, position = "dodge")+
+    geom_boxplot(width = 0.1, outlier.shape = NA, fill = "grey", notch= TRUE)+
+  scale_fill_manual(values = c("aquamarine", "darkgoldenrod3", "grey"))+
+  theme_minimal()
+
+plot(plot_alpha_A)
+
+# plot B: pigs per stage
+
+plot_alpha_B <- alpha_diversity %>%
+  filter(species == "pig") %>%
+  ggplot(
+    aes(x = factor(stage, levels = c("s", "w", "f")),y = shannon, fill = stage))+
+    geom_violin(trim = FALSE, color = NA, alpha = 0.6 )+
+    geom_boxplot(width = 0.1, outlier.shape = NA, fill = "grey", notch = TRUE)+
+    scale_fill_manual(values = c("s" = "purple","w" = "darkslategrey", "f" = "gold"))+
+    scale_x_discrete(labels = c("suckling pigs", "weaning pigs", "fattening pigs"))+
+    theme_minimal()+
+    labs(x = "", y = "Shannon diversity index (H)", title = "alpha diversity of suckling, weanig and fattening pigs")
+
+plot(plot_alpha_B)
+```
+
+### Ordination analysis - NMDS for $beta$ diversity
+
+-   AIM: move point along 2D scale, using optimization algorithm. Does not assume a linear relationship in our data (so I do not draw lines perpendicular to each other) but I actually tell the algorithm, how many dimensions I want (2 dimensions). The algorithm just takes all data points and puts them in a 2D-grid, doing an optimization.
+-   need of a **bray-curtis distance** matrix
+-   ordination in general just shows **clusters** in our data
+
+#### ordination analysis based on phyloseq object (abundance based)
 
 ```{r}
 # convert phyloseq object to compositional data (using microbiome package)
@@ -269,29 +331,36 @@ dist <- phyloseq::distance(pseq.rel, method = "bray")
 
 # ordinate the data
 set.seed(4235421)
-nmds <- metaMDS(dist, k = 1, trymax = 100)
+nmds <- metaMDS(dist, k = 2, trymax = 100)
 
 #NMDS-Plot
-plot_NMDS <- plot_ordination(pseq, ord, color = "animal") +
+plot_NMDS <- plot_ordination(pseq.rel, nmds, color = "animal") +
   geom_point(size = 1.2)+
-  theme_minimal()
+  theme_minimal()+
+  theme(axis.text.y = element_text(size = 3))
 print(plot_NMDS)
 
-#stress plot
+# stress plot
 stressplot(nmds)
+
 ```
 
-### ordination based on vegan package (percent based)
+#### ordination based on vegan package (percent based)
 
 ```{r}
-# calculate distance matrix
-dist_matrix <- vegdist(t(metaphlanData_percent))
+# calculate distance matrix (bray-curtis)
+# metaphlanData_percent table has to be transposed in order that species samples are rows and species are columns.
 
-set.seed(123)
-nmds <- metaMDS(dist_matrix)
+dist_matrix <- vegdist(t(metaphlanData_percent), method = "bray")
+
+# ordinate the data
+set.seed(12)
+nmds <- metaMDS(dist_matrix, k = 2, trymax = 100)
+
 
 # get scores from the vegan package
-scores(nmds)
+scores_nmds <- scores(nmds)
+plot(scores(nmds))
 
 
 # adapt metadata table
@@ -299,7 +368,150 @@ metaData_2 <- metaData%>%
   tibble::rownames_to_column(var = "Sample_ID")
 
 # make a data frame
-nmds_plot <- scores(nmds) %>%
-  as.data.frame(rownames = "Sample_ID") %>%
-  inner_join(., metadata, by = "Sample_ID", copy = TRUE)
+nmds_plot <- scores_nmds %>%
+  as_tibble(rownames = "Sample_ID")%>%
+  inner_join(., metaData_2, by = "Sample_ID", copy = TRUE)%>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = animal))+
+  geom_point()+
+  theme_minimal()
+
+plot(nmds_plot)
+
+
+# stress plot
+stressplot(nmds)
 ```
+
+the function `screeplot_NMDS` is not applicable since we do not produce eigenvalues and eigenvectors as we do in PCA or PCoA.
+
+But this plot should show, how stress decreases as the number of NMDS dimensions increases - similar as in PCA.
+
+Interpretation:
+
+-   stress-value \< 0.05 is en excellent fit
+
+-   stress-value \< 0.1 is good
+
+-   stress-value \< 0.2 is acceptable
+
+```{r}
+# Test stress for 1 to 6 dimensions
+stress_vals <- sapply(1:6, function(k) {
+  set.seed(123)
+  nmds <- metaMDS(dist_matrix, k = k, trymax = 20, trace = FALSE)
+  nmds$stress
+})
+
+# Plot stress vs. dimensions
+plot(1:6, stress_vals, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Dimensions (k)", ylab = "Stress",
+     main = "Stress Plot (like Screeplot for NMDS)")
+abline(h = 0.2, col = "red", lty = 2)  # Optional threshold line
+
+# source: adapted from ChatGPT4.0
+```
+
+#### bray-curtis distance matrix
+
+```{r}
+heatmap.2(as.matrix(dist_matrix),
+          trace = "none",
+          density.info = "none",
+          key = TRUE,
+          main ="Bray-Curtis-Distancematrix",
+          col = colorRampPalette(c("darkred", "orange", "yellow"))(100))
+```
+
+## Differential abundance Analysis
+
+-   remove all NA, in order DESeq2 will work
+
+```{r}
+otu <- otu_table(ps)
+otu[is.na(otu)] <- 0
+
+otu_table(ps) <- otu_table(otu, taxa_are_rows = TRUE)
+
+#check if no NA value is lost ?
+assertthat::assert_that(!any(is.na(otu_table(ps))))
+
+# -- FALSE: any NA exists
+# -- TRUE: no NA exists
+```
+
+run DESeq2: set reference first to *WORKER* in order to make the following comparisons:
+
+-   A: PIG / WORKER
+
+-   B: CTRL / WORKER
+
+```{r}
+# aggregate species level -> useful when we want to aggregate not on the lowest taxonomy level
+phy_species <- tax_glom(ps, taxrank = "SGB" )
+
+# force animal to be a factor explicitly
+sample_data(phy_species)$animal <- as.factor(sample_data(phy_species)$animal)
+
+# add a pseudocount of +1 (eliminate of 0 which causes problems and NA-values)
+otu_table(phy_species) <- otu_table(otu_table(phy_species)+1)
+
+# start differential abundance
+dds <- phyloseq_to_deseq2(phy_species, ~animal)
+dds$animal <- relevel(dds$animal, ref = "worker")  # set 'worker' as the baseline
+dds <- DESeq(dds, sfType = "poscounts")
+```
+
+the analysis consist of mainly three plots:
+
+1.  Volcano Plot
+
+2.  MA-Plot with baseMean data
+
+    very similar to volcano plot but instead of showing the x-axis we show
+
+3.  Volcano plot with species of interest (depending on the comparison we are looking at).
+
+### A: PIG / WORKER
+
+this is the main comparison in our analysis. We assume (also based on the ordination analysis aka $bata$ diversity measure) that we see a difference in clustering of pig and worker samples. Thus, there have to be microbial species in either of both hosts driving this significant difference. In order to visualize which species are significantly different between both hosts, we use differential abundance analysis. This results in a volcano plot, where all red species are significantly different between both hosts, while the black species are not.
+
+#### Volcano Plot
+
+```{r}
+res_human_vs_pig <- results(dds, contrast = c("animal", "pig", "worker"))
+
+# merge with taxonomy
+res_df_human_vs_pig <- as.data.frame(res_human_vs_pig)
+res_df_human_vs_pig$SGB <- rownames(res_df_human_vs_pig)
+
+
+tax <- as.data.frame(tax_table(phy_species))
+tax$SGB <- rownames(tax)
+
+res_merged <- merge(res_df_human_vs_pig, tax, by = "SGB")
+
+volcano_human_pig <- exp_volcano(res_merged, "Pigs vs. workers")
+volcano_human_pig + xlab(expression(Log[2]~"FoldChange (Pig vs. Worker)"))
+```
+
+#### MA-Plot
+
+```{r}
+# add a significance level
+res_df_human_vs_pig <- res_df_human_vs_pig %>%
+  mutate(significance = case_when(
+    padj < 0.05 & abs(log2FoldChange) >= 1 ~ "Significant",
+    TRUE ~ "Not Significant"
+  ))
+# plot with base mean
+ggplot(data = res_df_human_vs_pig, aes(y = log10(baseMean), x = log2FoldChange, color = significance)) +
+  geom_point(alpha = 0.8) +
+  scale_color_manual(values= c("Significant" = "grey", "Not Significant" = "black"))+
+  labs(
+    title = "Base Mean vs Log2 Fold Change (Workers vs Pigs)", 
+    x = "Log2 Fold Change", 
+    y = "Base Mean")+
+  theme_minimal()
+```
+
+#### Species of interest
